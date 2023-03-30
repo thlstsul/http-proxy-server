@@ -1,0 +1,26 @@
+[package]
+name = "http-proxy-server"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+anyhow = "1.0.69"
+atoi = "2.0.0"
+bytes = "1.4.0"
+cached = "0.42.0"
+http-body-util = "0.1.0-rc.2"
+httparse = "1.8.0"
+hyper = { version = "1.0.0-rc.3", features = ["full"] }
+openssl = { version = "0.10", features = ["vendored"] }
+pin-project-lite = "0.2.9"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+time = { version = "0.3.19", features = ["std", "macros"] }
+tokio = { version = "1.24.1", features = ["rt", "rt-multi-thread", "net", "fs", "io-util", "time", "macros"] }
+tokio-openssl = "0.6.3"
+tokio-stream = "0.1.12"
+tracing = "0.1.37"
+tracing-appender = "0.2.2"
+tracing-subscriber = { version = "0.3.16", features = ["fmt", "local-time"] }
