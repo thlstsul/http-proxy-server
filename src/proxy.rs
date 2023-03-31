@@ -7,7 +7,6 @@ use bytes::Bytes;
 use cached::{cached_result, Cached, SizedCache};
 use http_body_util::combinators::BoxBody;
 use http_body_util::{BodyExt, Empty, Full};
-use hyper::client::conn::http1::Builder;
 use hyper::service::Service;
 use hyper::upgrade::Upgraded;
 use hyper::{body::Incoming as IncomingBody, Request, Response};
@@ -20,7 +19,6 @@ use tracing::{debug, error, info, instrument};
 
 use crate::ca::CA;
 use crate::config::Config;
-use crate::stream::HttpClientStream;
 
 cached_result! {
     SIGNED_CA: SizedCache<String, CA> = SizedCache::with_size(50);
@@ -48,6 +46,21 @@ impl Service<Request<IncomingBody>> for Proxy {
 
     fn call(&mut self, req: Request<IncomingBody>) -> Self::Future {
         Box::pin(proxy(req, self.config.clone(), self.root_ca.clone()))
+    }
+}
+
+struct HttpsClient {
+    addr: String,
+    sni: String,
+}
+
+impl Service<Request<IncomingBody>> for HttpsClient {
+    type Response = Response<BoxBody<Bytes, hyper::Error>>;
+    type Error = hyper::Error;
+    type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
+
+    fn call(&mut self, req: Request<IncomingBody>) -> Self::Future {
+        Box::pin(https_request(req, self.addr.clone(), self.sni.clone()))
     }
 }
 
@@ -98,7 +111,7 @@ async fn proxy(
 
         let stream = TcpStream::connect(addr).await.unwrap();
 
-        let (mut sender, conn) = Builder::new()
+        let (mut sender, conn) = hyper::client::conn::http1::Builder::new()
             .preserve_header_case(true)
             .title_case_headers(true)
             .handshake(stream)
@@ -133,30 +146,54 @@ async fn transform_tunnel(
 
     debug!("accept success");
 
-    let output = TcpStream::connect(addr).await?;
     let sni = if sni.is_empty() { &host } else { sni };
-    let mut client_ssl = SslConnector::builder(SslMethod::tls())?
-        .build()
-        .configure()?
-        .verify_hostname(false)
-        .into_ssl(sni)?;
-    // TODO 客户端校验证书（store: Microsoft.pem）
-    client_ssl.set_verify(SslVerifyMode::NONE);
-    let mut output = SslStream::new(client_ssl, output)?;
-    Pin::new(&mut output).connect().await?;
 
     debug!("connect success");
 
-    let mut output = HttpClientStream::new(output);
-
-    let (from_client, from_server) = io::copy_bidirectional(&mut input, &mut output).await?;
-
-    info!(
-        "client wrote {} bytes and received {} bytes",
-        from_client, from_server
-    );
+    hyper::server::conn::http1::Builder::new()
+        .serve_connection(
+            input,
+            HttpsClient {
+                addr,
+                sni: sni.to_owned(),
+            },
+        )
+        .without_shutdown()
+        .await?;
 
     Ok(())
+}
+
+async fn https_request(
+    req: Request<hyper::body::Incoming>,
+    addr: String,
+    sni: String,
+) -> Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error> {
+    let output = TcpStream::connect(addr.clone()).await.unwrap();
+    let mut client_ssl = SslConnector::builder(SslMethod::tls())
+        .unwrap()
+        .build()
+        .configure()
+        .unwrap()
+        .verify_hostname(false)
+        .into_ssl(&sni)
+        .unwrap();
+    // TODO 客户端校验证书（store: Microsoft.pem）
+    client_ssl.set_verify(SslVerifyMode::NONE);
+    let mut output = SslStream::new(client_ssl, output).unwrap();
+    Pin::new(&mut output).connect().await.unwrap();
+
+    let (mut sender, conn) = hyper::client::conn::http1::Builder::new()
+        .handshake(output)
+        .await?;
+    tokio::task::spawn(async move {
+        if let Err(err) = conn.await {
+            error!("Connection failed: {:?}", err);
+        }
+    });
+
+    let resp = sender.send_request(req).await?;
+    Ok(resp.map(|b| b.boxed()))
 }
 
 async fn direct_tunnel(mut upgraded: Upgraded, addr: String) -> Result<()> {
@@ -206,4 +243,31 @@ fn full<T: Into<Bytes>>(chunk: T) -> BoxBody<Bytes, hyper::Error> {
     Full::new(chunk.into())
         .map_err(|never| match never {})
         .boxed()
+}
+
+#[tokio::test]
+async fn test() {
+    let stream = TcpStream::connect("bing.com:443").await.unwrap();
+
+    let (mut sender, conn) = hyper::client::conn::http1::Builder::new()
+        .preserve_header_case(true)
+        .title_case_headers(true)
+        .handshake(stream)
+        .await
+        .unwrap();
+    tokio::task::spawn(async move {
+        if let Err(err) = conn.await {
+            error!("Connection failed: {:?}", err);
+        }
+    });
+
+    println!("client conn success");
+    let req = Request::builder()
+        .uri("/")
+        .method("GET")
+        .header(hyper::header::HOST, "bing.com")
+        .body(Empty::<Bytes>::new())
+        .unwrap();
+    let resp = sender.send_request(req).await.unwrap();
+    println!("client request success: {:?}", resp);
 }

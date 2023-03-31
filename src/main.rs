@@ -11,10 +11,8 @@ use crate::config::Config;
 use crate::proxy::Proxy;
 
 mod ca;
-mod codec;
 mod config;
 mod proxy;
-mod stream;
 
 #[tokio::main]
 async fn main() {
