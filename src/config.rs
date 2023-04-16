@@ -18,6 +18,7 @@ pub struct Config {
     pub sni: String,
     pub root_ca_cert_path: PathBuf,
     pub root_ca_key_path: PathBuf,
+    pub parse: bool,
 }
 
 impl Default for Config {
@@ -29,6 +30,7 @@ impl Default for Config {
             sni: "".to_owned(),
             root_ca_cert_path: "proxy.ca.cert.crt".into(),
             root_ca_key_path: "proxy.ca.key.pem".into(),
+            parse: false,
         }
     }
 }

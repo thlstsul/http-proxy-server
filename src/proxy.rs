@@ -79,8 +79,15 @@ async fn proxy(
 
                             match signed_ca {
                                 Ok(signed_ca) => {
-                                    transform_tunnel(upgraded, addr, host, &signed_ca, &config.sni)
-                                        .await
+                                    transform_tunnel(
+                                        upgraded,
+                                        addr,
+                                        host,
+                                        &signed_ca,
+                                        &config.sni,
+                                        config.parse,
+                                    )
+                                    .await
                                 }
                                 Err(e) => Err(e),
                             }
@@ -134,6 +141,7 @@ async fn transform_tunnel(
     host: String,
     signed_ca: &CA,
     sni: &str,
+    parse: bool,
 ) -> Result<()> {
     let mut builder = SslAcceptor::mozilla_intermediate(SslMethod::tls())?;
     builder.set_certificate(&signed_ca.cert)?;
@@ -148,18 +156,24 @@ async fn transform_tunnel(
 
     let sni = if sni.is_empty() { &host } else { sni };
 
-    debug!("connect success");
+    if parse {
+        hyper::server::conn::http1::Builder::new()
+            .serve_connection(
+                input,
+                HttpsClient {
+                    addr,
+                    sni: sni.to_owned(),
+                },
+            )
+            .without_shutdown()
+            .await?;
+    } else {
+        let mut output = get_ssl_connection(addr, sni).await?;
 
-    hyper::server::conn::http1::Builder::new()
-        .serve_connection(
-            input,
-            HttpsClient {
-                addr,
-                sni: sni.to_owned(),
-            },
-        )
-        .without_shutdown()
-        .await?;
+        debug!("connect success");
+
+        tokio::io::copy_bidirectional(&mut input, &mut output).await?;
+    }
 
     Ok(())
 }
@@ -169,19 +183,9 @@ async fn https_request(
     addr: String,
     sni: String,
 ) -> Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error> {
-    let output = TcpStream::connect(addr.clone()).await.unwrap();
-    let mut client_ssl = SslConnector::builder(SslMethod::tls())
-        .unwrap()
-        .build()
-        .configure()
-        .unwrap()
-        .verify_hostname(false)
-        .into_ssl(&sni)
-        .unwrap();
-    // TODO 客户端校验证书（store: Microsoft.pem）
-    client_ssl.set_verify(SslVerifyMode::NONE);
-    let mut output = SslStream::new(client_ssl, output).unwrap();
-    Pin::new(&mut output).connect().await.unwrap();
+    let output = get_ssl_connection(addr, &sni).await.unwrap();
+
+    debug!("connect success");
 
     let (mut sender, conn) = hyper::client::conn::http1::Builder::new()
         .handshake(output)
@@ -194,6 +198,23 @@ async fn https_request(
 
     let resp = sender.send_request(req).await?;
     Ok(resp.map(|b| b.boxed()))
+}
+
+async fn get_ssl_connection(addr: String, sni: &str) -> Result<SslStream<TcpStream>> {
+    let output = TcpStream::connect(addr).await?;
+    let mut client_ssl = SslConnector::builder(SslMethod::tls())?
+        .build()
+        .configure()?
+        .verify_hostname(false)
+        .into_ssl(sni)?;
+    // TODO 客户端校验证书（store: Microsoft.pem）
+    client_ssl.set_verify(SslVerifyMode::NONE);
+    let mut output = SslStream::new(client_ssl, output)?;
+    Pin::new(&mut output)
+        .connect()
+        .await
+        .map_err(|e| anyhow!("ssl客户端连接异常:{}", e))?;
+    Ok(output)
 }
 
 async fn direct_tunnel(mut upgraded: Upgraded, addr: String) -> Result<()> {
