@@ -1,7 +1,9 @@
+#![windows_subsystem = "windows"]
 use std::sync::Arc;
 
 use ca::CA;
-use hyper::server::conn::http1;
+use hyper::server::conn::http1::Builder as ServerBuilder;
+use hyper_util::rt::TokioIo;
 use time::{macros::format_description, UtcOffset};
 use tokio::net::TcpListener;
 use tracing::{error, info, Level};
@@ -12,7 +14,9 @@ use crate::proxy::Proxy;
 
 mod ca;
 mod config;
+mod parser;
 mod proxy;
+mod util;
 
 #[tokio::main]
 async fn main() {
@@ -51,11 +55,13 @@ async fn main() {
         let config = config.clone();
         let root_ca = root_ca.clone();
 
+        let io = TokioIo::new(stream);
+
         tokio::task::spawn(async move {
-            if let Err(err) = http1::Builder::new()
+            if let Err(err) = ServerBuilder::new()
                 .preserve_header_case(true)
                 .title_case_headers(true)
-                .serve_connection(stream, Proxy::new(config, root_ca))
+                .serve_connection(io, Proxy::new(config, root_ca))
                 .with_upgrades()
                 .await
             {
