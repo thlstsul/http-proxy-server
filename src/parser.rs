@@ -91,8 +91,6 @@ where
     Ok(resp)
 }
 
-//TODO 定义切面trait, learn tower, plugin
-
 pub struct PrintReq;
 
 impl Service<Request<IncomingBody>> for PrintReq {

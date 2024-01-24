@@ -43,8 +43,9 @@ impl Service<Request<IncomingBody>> for Proxy {
         let config = self.config.clone();
         let root_ca = self.root_ca.clone();
         let res = async move {
-            if Method::CONNECT == req.method() {
-                if let Some((addr, host)) = host_addr(req.uri()) {
+            if let Some((addr, host)) = host_addr(req.uri()) {
+                if Method::CONNECT == req.method() {
+                    // https
                     tokio::task::spawn(async move {
                         let result = upgrade_https(req, host, addr, config, root_ca).await;
                         if let Err(e) = result {
@@ -54,21 +55,18 @@ impl Service<Request<IncomingBody>> for Proxy {
 
                     Ok(Response::new(empty()))
                 } else {
-                    error!("CONNECT host is not socket addr: {:?}", req.uri());
-                    let mut resp = Response::new(full("CONNECT must be to a socket address"));
-                    *resp.status_mut() = StatusCode::BAD_REQUEST;
+                    // http
+                    let stream = TcpStream::connect(addr).await.unwrap();
 
-                    Ok(resp)
+                    let resp = http_request(req, stream, Some(PrintReq), Some(PrintResp)).await?;
+                    Ok(resp.map(|b| b.boxed()))
                 }
             } else {
-                let host = req.uri().host().expect("uri has no host");
-                let port = req.uri().port_u16().unwrap_or(80);
-                let addr = format!("{}:{}", host, port);
+                error!("CONNECT host is not socket addr: {:?}", req.uri());
+                let mut resp = Response::new(full("CONNECT must be to a socket address"));
+                *resp.status_mut() = StatusCode::BAD_REQUEST;
 
-                let stream = TcpStream::connect(addr).await.unwrap();
-
-                let resp = http_request(req, stream, Some(PrintReq), Some(PrintResp)).await?;
-                Ok(resp.map(|b| b.boxed()))
+                Ok(resp)
             }
         };
 
