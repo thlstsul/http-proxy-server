@@ -13,8 +13,8 @@ use crate::config::Config;
 use crate::proxy::Proxy;
 
 mod ca;
+mod client;
 mod config;
-mod parser;
 mod proxy;
 mod util;
 

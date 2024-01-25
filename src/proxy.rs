@@ -5,7 +5,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use bytes::Bytes;
 use http_body_util::combinators::BoxBody;
-use http_body_util::{BodyExt, Empty, Full};
+use http_body_util::BodyExt;
 use hyper::server::conn::http1::Builder as ServerBuilder;
 use hyper::service::Service;
 use hyper::upgrade::Upgraded;
@@ -19,9 +19,9 @@ use tokio_openssl::SslStream;
 use tracing::{debug, error, info, instrument};
 
 use crate::ca::CA;
+use crate::client::{http_request, HttpsClient, PrintReq, PrintResp};
 use crate::config::Config;
-use crate::parser::{http_request, HttpsClient, PrintReq, PrintResp};
-use crate::util::{get_signed_cert, get_ssl_connection, host_addr};
+use crate::util::{self, get_signed_cert, get_ssl_connection, host_addr};
 
 pub struct Proxy {
     config: Arc<Config>,
@@ -53,19 +53,27 @@ impl Service<Request<IncomingBody>> for Proxy {
                         }
                     });
 
-                    Ok(Response::new(empty()))
+                    Ok(Response::new(util::empty()))
                 } else {
                     // http
-                    let stream = TcpStream::connect(addr).await.unwrap();
-
-                    let resp = http_request(req, stream, Some(PrintReq), Some(PrintResp)).await?;
-                    Ok(resp.map(|b| b.boxed()))
+                    match TcpStream::connect(addr).await {
+                        Ok(stream) => {
+                            let resp =
+                                http_request(req, stream, Some(PrintReq), Some(PrintResp)).await?;
+                            Ok(resp.map(|b| b.boxed()))
+                        }
+                        Err(e) => {
+                            error!("connect http failed: {e}");
+                            let mut resp = Response::new(util::full("connect http failed"));
+                            *resp.status_mut() = StatusCode::NOT_ACCEPTABLE;
+                            Ok(resp)
+                        }
+                    }
                 }
             } else {
                 error!("CONNECT host is not socket addr: {:?}", req.uri());
-                let mut resp = Response::new(full("CONNECT must be to a socket address"));
+                let mut resp = Response::new(util::full("CONNECT must be to a socket address"));
                 *resp.status_mut() = StatusCode::BAD_REQUEST;
-
                 Ok(resp)
             }
         };
@@ -144,16 +152,4 @@ async fn transform_tunnel(
     }
 
     Ok(())
-}
-
-fn empty() -> BoxBody<Bytes, hyper::Error> {
-    Empty::<Bytes>::new()
-        .map_err(|never| match never {})
-        .boxed()
-}
-
-fn full<T: Into<Bytes>>(chunk: T) -> BoxBody<Bytes, hyper::Error> {
-    Full::new(chunk.into())
-        .map_err(|never| match never {})
-        .boxed()
 }
