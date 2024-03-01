@@ -143,7 +143,7 @@ async fn transform_tunnel(
             .without_shutdown()
             .await?;
     } else {
-        let mut output = get_ssl_connection(addr, sni).await?;
+        let mut output = get_ssl_connection(&addr, sni).await?;
 
         debug!("connect success");
 

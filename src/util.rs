@@ -19,7 +19,7 @@ cached_result! {
     }
 }
 
-pub async fn get_ssl_connection(addr: String, sni: &str) -> Result<SslStream<TcpStream>> {
+pub async fn get_ssl_connection(addr: &str, sni: &str) -> Result<SslStream<TcpStream>> {
     let output = TcpStream::connect(addr).await?;
     let mut client_ssl = SslConnector::builder(SslMethod::tls())?
         .build()

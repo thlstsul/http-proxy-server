@@ -50,7 +50,7 @@ where
     BS: Service<Request<IncomingBody>, Future = RequestFuture>,
     AS: Service<Response<BoxBody<Bytes, hyper::Error>>, Future = ResponseFuture>,
 {
-    match get_ssl_connection(addr, &sni).await {
+    match get_ssl_connection(&addr, &sni).await {
         Ok(stream) => http_request(req, stream, before, after).await,
         Err(e) => {
             error!("connect https failed: {e}");
@@ -78,7 +78,7 @@ where
     let (mut sender, conn) = hyper::client::conn::http1::handshake(io).await?;
     tokio::task::spawn(async move {
         if let Err(err) = conn.await {
-            error!("Connection failed: {:?}", err);
+            error!("Connection failed: {err}");
         }
     });
 
@@ -102,7 +102,7 @@ pub struct PrintReq;
 impl Service<Request<IncomingBody>> for PrintReq {
     type Response = Request<IncomingBody>;
     type Error = ();
-    type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
+    type Future = RequestFuture;
 
     fn call(&self, req: Request<IncomingBody>) -> Self::Future {
         Box::pin(async move {
@@ -117,7 +117,7 @@ pub struct PrintResp;
 impl Service<Response<BoxBody<Bytes, hyper::Error>>> for PrintResp {
     type Response = Response<BoxBody<Bytes, hyper::Error>>;
     type Error = ();
-    type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
+    type Future = ResponseFuture;
 
     fn call(&self, resp: Response<BoxBody<Bytes, hyper::Error>>) -> Self::Future {
         Box::pin(async move {
