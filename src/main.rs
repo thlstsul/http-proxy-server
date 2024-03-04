@@ -1,7 +1,5 @@
 #![windows_subsystem = "windows"]
-use std::sync::Arc;
 
-use ca::CA;
 use hyper::server::conn::http1::Builder as ServerBuilder;
 use hyper_util::rt::TokioIo;
 use time::{macros::format_description, UtcOffset};
@@ -9,13 +7,16 @@ use tokio::net::TcpListener;
 use tracing::{error, info, Level};
 use tracing_subscriber::fmt::time::OffsetTime;
 
-use crate::config::Config;
+use crate::adapter::HyperAdapter;
 use crate::proxy::Proxy;
+use crate::state::State;
 
+mod adapter;
 mod ca;
 mod client;
 mod config;
 mod proxy;
+mod state;
 mod util;
 
 #[tokio::main]
@@ -34,17 +35,9 @@ async fn main() {
         .with_max_level(Level::INFO)
         .init();
 
-    let config = Arc::new(Config::load().await.expect("Failed to load config"));
-    let root_ca = Arc::new(
-        CA::load_or_create(
-            config.root_ca_cert_path.as_path(),
-            config.root_ca_key_path.as_path(),
-        )
-        .await
-        .expect("Failed to load root CA"),
-    );
+    let state = State::new().await.expect("State init failed");
 
-    let addr = config.local_addr().expect("Parse config address failed");
+    let addr = state.local_addr().expect("Parse config address failed");
     let listener = TcpListener::bind(addr)
         .await
         .expect("Create listener failed");
@@ -53,24 +46,22 @@ async fn main() {
     loop {
         match listener.accept().await {
             Ok((stream, _)) => {
-                let config = config.clone();
-                let root_ca = root_ca.clone();
-
+                let state = state.clone();
                 let io = TokioIo::new(stream);
 
                 tokio::task::spawn(async move {
                     if let Err(err) = ServerBuilder::new()
                         .preserve_header_case(true)
                         .title_case_headers(true)
-                        .serve_connection(io, Proxy::new(config, root_ca))
+                        .serve_connection(io, Proxy.hyper(|req| (state, req)))
                         .with_upgrades()
                         .await
                     {
-                        error!("Failed to serve connection: {err:?}");
+                        error!("Failed to serve connection: {err}");
                     }
                 });
             }
-            Err(err) => error!("Failed to accept: {err:?}"),
+            Err(err) => error!("Failed to accept: {err}"),
         }
     }
 }

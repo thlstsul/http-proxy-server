@@ -1,6 +1,6 @@
 [package]
 name = "http-proxy-server"
-version = "1.1.0"
+version = "2.0.0"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -9,7 +9,7 @@ edition = "2021"
 anyhow = "1.0"
 bytes = "1.5.0"
 cached = "0.42.0"
-hyper = { version = "1.1.0", features = ["full"] }
+hyper = { version = "1.2.0", features = ["full"] }
 http-body-util = "0.1"
 hyper-util = { version = "0.1", features = ["full"] }
 openssl = { version = "0.10", features = ["vendored"] }
@@ -29,3 +29,4 @@ tokio-openssl = "0.6.3"
 tracing = "0.1.37"
 tracing-appender = "0.2.2"
 tracing-subscriber = { version = "0.3.16", features = ["fmt", "local-time"] }
+motore = "0.4.0"
