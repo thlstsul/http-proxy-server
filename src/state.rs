@@ -17,6 +17,14 @@ cached_result! {
 }
 
 #[derive(Clone)]
+pub struct ClientState {
+    pub addr: String,
+    // http will be host
+    pub sni: String,
+    pub is_secure: bool,
+}
+
+#[derive(Clone)]
 pub struct State {
     config: Arc<Config>,
     root_ca: Arc<CA>,
@@ -84,5 +92,3 @@ impl State {
         Ok(input)
     }
 }
-
-// TODO 切面

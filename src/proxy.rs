@@ -1,5 +1,3 @@
-#![allow(clippy::manual_async_fn)]
-
 use std::pin::Pin;
 
 use anyhow::{anyhow, Result};
@@ -15,15 +13,34 @@ use tokio::net::TcpStream;
 use tracing::{debug, error, info};
 
 use crate::adapter::HyperAdapter;
-use crate::client::HttpClient;
-use crate::state::State;
+use crate::state::{ClientState, State};
 use crate::util::{self, create_ssl_connection, host_addr};
 
 #[derive(Clone)]
-pub struct Proxy;
+pub struct Proxy<C> {
+    client: C,
+}
+
+impl<C> Proxy<C> {
+    pub fn new(client: C) -> Self {
+        Self { client }
+    }
+}
 
 #[service]
-impl Service<State, Request<IncomingBody>> for Proxy {
+impl<C> Service<State, Request<IncomingBody>> for Proxy<C>
+where
+    C: Service<
+            ClientState,
+            Request<IncomingBody>,
+            Response = Response<BoxBody<Bytes, hyper::Error>>,
+            Error = hyper::Error,
+        > + Clone
+        + Sync
+        + Send
+        + Unpin
+        + 'static,
+{
     async fn call(
         &self,
         state: &mut State,
@@ -31,9 +48,10 @@ impl Service<State, Request<IncomingBody>> for Proxy {
     ) -> Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error> {
         if Method::CONNECT == req.method() {
             let state = state.clone();
+            let client = self.client.clone();
             // https
             tokio::task::spawn(async move {
-                let _ = upgrade_https(req, state)
+                let _ = upgrade_https(req, state, client)
                     .await
                     .inspect_err(|e| error!("upgrade https fail: {e}"));
             });
@@ -42,8 +60,12 @@ impl Service<State, Request<IncomingBody>> for Proxy {
         } else {
             // http
             if let Some((addr, host)) = host_addr(req.uri()) {
-                let client = HttpClient::new(addr, host, false);
-                client.call(state, req).await
+                let mut state = ClientState {
+                    addr,
+                    sni: host,
+                    is_secure: false,
+                };
+                self.client.call(&mut state, req).await
             } else {
                 let mut resp = Response::new(util::full("HTTP must be to socket address"));
                 *resp.status_mut() = StatusCode::NOT_ACCEPTABLE;
@@ -53,7 +75,19 @@ impl Service<State, Request<IncomingBody>> for Proxy {
     }
 }
 
-async fn upgrade_https(req: Request<IncomingBody>, state: State) -> Result<()> {
+async fn upgrade_https<C>(req: Request<IncomingBody>, state: State, client: C) -> Result<()>
+where
+    C: Service<
+            ClientState,
+            Request<IncomingBody>,
+            Response = Response<BoxBody<Bytes, hyper::Error>>,
+            Error = hyper::Error,
+        > + Clone
+        + Sync
+        + Send
+        + Unpin
+        + 'static,
+{
     let (addr, host) = host_addr(req.uri()).ok_or(anyhow!("CONNECT must be to socket address"))?;
     let upgraded = hyper::upgrade::on(req).await?;
     let mut upgraded = TokioIo::new(upgraded);
@@ -69,11 +103,13 @@ async fn upgrade_https(req: Request<IncomingBody>, state: State) -> Result<()> {
         if state.is_parse() {
             // use hyper parse http
             let input = TokioIo::new(input);
+            let state = ClientState {
+                addr,
+                sni: sni.to_owned(),
+                is_secure: true,
+            };
             ServerBuilder::new()
-                .serve_connection(
-                    input,
-                    HttpClient::new(addr, host, true).hyper(|req| (state, req)),
-                )
+                .serve_connection(input, client.hyper(|req| (state, req)))
                 .without_shutdown()
                 .await?;
         } else {

@@ -1,13 +1,17 @@
 #![windows_subsystem = "windows"]
+#![allow(clippy::manual_async_fn)]
 
 use hyper::server::conn::http1::Builder as ServerBuilder;
 use hyper_util::rt::TokioIo;
+use motore::builder::ServiceBuilder;
 use time::{macros::format_description, UtcOffset};
 use tokio::net::TcpListener;
 use tracing::{error, info, Level};
 use tracing_subscriber::fmt::time::OffsetTime;
 
 use crate::adapter::HyperAdapter;
+use crate::client::HttpClient;
+use crate::layer::log::LogLayer;
 use crate::proxy::Proxy;
 use crate::state::State;
 
@@ -15,6 +19,7 @@ mod adapter;
 mod ca;
 mod client;
 mod config;
+mod layer;
 mod proxy;
 mod state;
 mod util;
@@ -50,10 +55,11 @@ async fn main() {
                 let io = TokioIo::new(stream);
 
                 tokio::task::spawn(async move {
+                    let client = ServiceBuilder::new().layer(LogLayer).service(HttpClient);
                     if let Err(err) = ServerBuilder::new()
                         .preserve_header_case(true)
                         .title_case_headers(true)
-                        .serve_connection(io, Proxy.hyper(|req| (state, req)))
+                        .serve_connection(io, Proxy::new(client).hyper(|req| (state, req)))
                         .with_upgrades()
                         .await
                     {
