@@ -34,6 +34,6 @@ jobs:
         run: cargo build --verbose --release
 
       - name: Upload Release Patch
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
-          files: target\release\${{ vars.BIN_NAME }}.exe
+          files: target/release/${{ vars.BIN_NAME }}.exe
