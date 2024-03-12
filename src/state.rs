@@ -22,6 +22,7 @@ pub struct ClientState {
     // http will be host
     pub sni: String,
     pub is_secure: bool,
+    pub parse: bool,
 }
 
 #[derive(Clone)]

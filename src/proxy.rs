@@ -64,6 +64,7 @@ where
                     addr,
                     sni: host,
                     is_secure: false,
+                    parse: state.is_parse(),
                 };
                 self.client.call(&mut state, req).await
             } else {
@@ -107,6 +108,7 @@ where
                 addr,
                 sni: sni.to_owned(),
                 is_secure: true,
+                parse: true,
             };
             ServerBuilder::new()
                 .serve_connection(input, client.hyper(|req| (state, req)))

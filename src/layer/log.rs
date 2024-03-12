@@ -29,9 +29,13 @@ where
         state: &mut ClientState,
         req: Request<IncomingBody>,
     ) -> Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error> {
-        info!("request: {req:?}");
+        if state.parse {
+            info!("request: {req:?}");
+        }
         let resp = self.inner.call(state, req).await;
-        info!("response: {resp:?}");
+        if state.parse {
+            info!("response: {resp:?}");
+        }
         resp
     }
 }

@@ -2,6 +2,7 @@ use std::pin::Pin;
 
 use anyhow::{anyhow, Result};
 use bytes::Bytes;
+use http::uri::Scheme;
 use http_body_util::{combinators::BoxBody, BodyExt, Empty, Full};
 use hyper::Uri;
 use openssl::ssl::{SslConnector, SslMethod, SslVerifyMode};
@@ -27,7 +28,14 @@ pub async fn create_ssl_connection(addr: &str, sni: &str) -> Result<SslStream<Tc
 
 pub fn host_addr(uri: &Uri) -> Option<(String, String)> {
     uri.authority()
-        .map(|auth| auth.to_string())
+        .map(|auth| {
+            let mut addr = auth.to_string();
+            if Some(&Scheme::HTTP) == uri.scheme() && uri.port().is_none() {
+                // for TcpStream connect
+                addr = format!("{addr}:80");
+            }
+            addr
+        })
         .zip(uri.host().map(|host| host.to_string()))
 }
 
