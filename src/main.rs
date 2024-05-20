@@ -1,4 +1,4 @@
-#![windows_subsystem = "windows"]
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 #![allow(clippy::manual_async_fn)]
 
 use hyper::server::conn::http1::Builder as ServerBuilder;
@@ -26,19 +26,27 @@ mod util;
 
 #[tokio::main]
 async fn main() {
-    let file_appender = tracing_appender::rolling::never(".", "proxy.log");
-    let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
     let offset = UtcOffset::current_local_offset().expect("Should get local offset!");
     let timer = OffsetTime::new(
         offset,
         format_description!("[year]-[month]-[day] [hour]:[minute]:[second]"),
     );
-    tracing_subscriber::fmt()
-        .with_writer(non_blocking)
-        .with_timer(timer)
-        .with_ansi(false)
-        .with_max_level(Level::INFO)
-        .init();
+    if cfg!(not(debug_assertions)) {
+        let file_appender = tracing_appender::rolling::never(".", "proxy.log");
+        let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
+        tracing_subscriber::fmt()
+            .with_writer(non_blocking)
+            .with_timer(timer)
+            .with_ansi(false)
+            .with_max_level(Level::ERROR)
+            .init();
+    } else {
+        tracing_subscriber::fmt()
+            .with_timer(timer)
+            .with_ansi(true)
+            .with_max_level(Level::INFO)
+            .init();
+    }
 
     let state = State::new().await.expect("State init failed");
 
