@@ -52,7 +52,7 @@ impl State {
         self.config.parse
     }
 
-    pub fn get_sni<'a>(&'a self, host: &'a str) -> &str {
+    pub fn get_sni<'a>(&'a self, host: &'a str) -> &'a str {
         if self.config.sni.is_empty() {
             host
         } else {
