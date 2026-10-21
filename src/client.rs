@@ -1,11 +1,11 @@
 use anyhow::Result;
 use bytes::Bytes;
-use http_body_util::combinators::BoxBody;
 use http_body_util::BodyExt;
+use http_body_util::combinators::BoxBody;
 use hyper::StatusCode;
-use hyper::{body::Incoming as IncomingBody, Request, Response};
+use hyper::{Request, Response, body::Incoming as IncomingBody};
 use hyper_util::rt::TokioIo;
-use motore::{service, Service};
+use motore::{Service, service};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpStream;
 use tracing::{debug, error};

@@ -1,13 +1,11 @@
-use std::pin::Pin;
-
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use bytes::Bytes;
 use http_body_util::combinators::BoxBody;
 use hyper::server::conn::http1::Builder as ServerBuilder;
-use hyper::{body::Incoming as IncomingBody, Request, Response};
 use hyper::{Method, StatusCode};
+use hyper::{Request, Response, body::Incoming as IncomingBody};
 use hyper_util::rt::TokioIo;
-use motore::{service, Service};
+use motore::{Service, service};
 use tokio::io;
 use tokio::net::TcpStream;
 use tracing::{debug, error, info};
@@ -94,8 +92,7 @@ where
     let mut upgraded = TokioIo::new(upgraded);
 
     if state.is_proxy(&host) {
-        let mut input = state.wrap_ssl_stream(upgraded, host.clone())?;
-        Pin::new(&mut input).accept().await?;
+        let mut input = state.wrap_ssl_stream(upgraded, host.clone()).await?;
 
         debug!("accept success");
 

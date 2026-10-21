@@ -1,7 +1,7 @@
 use bytes::Bytes;
 use http_body_util::combinators::BoxBody;
-use hyper::{body::Incoming as IncomingBody, Request, Response};
-use motore::{layer::Layer, service, Service};
+use hyper::{Request, Response, body::Incoming as IncomingBody};
+use motore::{Service, layer::Layer, service};
 use tracing::info;
 
 use crate::state::ClientState;

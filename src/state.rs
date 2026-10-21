@@ -1,19 +1,21 @@
-use anyhow::{anyhow, Result};
-use cached::{cached_result, Cached, SizedCache};
+use anyhow::{Result, anyhow};
+use cached::{Cached, LruCache};
 use hyper::upgrade::Upgraded;
 use hyper_util::rt::TokioIo;
-use openssl::ssl::{Ssl, SslAcceptor, SslMethod};
-use std::{net::SocketAddr, sync::Arc};
-use tokio_openssl::SslStream;
+use rustls::ServerConfig;
+use rustls::pki_types::PrivateKeyDer;
+use std::{
+    net::SocketAddr,
+    sync::{Arc, Mutex, OnceLock},
+};
+use tokio_rustls::{TlsAcceptor, server::TlsStream};
 
-use crate::{ca::CA, config::Config};
+use crate::ca::CA;
+use crate::config::Config;
 
-cached_result! {
-    SIGNED_CA: SizedCache<String, CA> = SizedCache::with_size(50);
-    fn get_cached_cert(host: String) -> Result<CA, String> = {
-        let mut cache = SIGNED_CA.lock().map_err(|e| e.to_string())?;
-        cache.cache_get(&host).cloned().ok_or("had not cache".to_string())
-    }
+fn signed_config() -> &'static Mutex<LruCache<String, Arc<ServerConfig>>> {
+    static SIGNED_CONFIG: OnceLock<Mutex<LruCache<String, Arc<ServerConfig>>>> = OnceLock::new();
+    SIGNED_CONFIG.get_or_init(|| Mutex::new(LruCache::new(50)))
 }
 
 #[derive(Clone)]
@@ -60,36 +62,41 @@ impl State {
         }
     }
 
-    pub fn get_signed_cert(&self, host: String) -> Result<CA> {
-        match get_cached_cert(host.clone()) {
-            Ok(ca) => Ok(ca),
-            Err(_) => match self.root_ca.sign(host.clone()) {
-                Ok(ca) => match SIGNED_CA.lock() {
-                    Ok(mut cache) => {
-                        cache.cache_set(host, ca.clone());
-                        Ok(ca)
-                    }
-                    Err(e) => Err(anyhow!("{e}")),
-                },
-                Err(e) => Err(anyhow!("{e}")),
-            },
+    fn signed_server_config(&self, host: String) -> Result<Arc<ServerConfig>> {
+        // 短临界区查询，避免签发（阻塞的 keygen/sign）期间阻塞其它连接
+        if let Some(config) = {
+            let mut cache = signed_config().lock().map_err(|e| anyhow!("{e}"))?;
+            cache.cache_get(&host).cloned()
+        } {
+            return Ok(config);
         }
+
+        let signed = self.root_ca.sign(host.clone())?;
+        let chain = vec![signed.cert.clone(), self.root_ca.cert.clone()];
+        let config = Arc::new(
+            ServerConfig::builder()
+                .with_no_client_auth()
+                .with_single_cert(chain, PrivateKeyDer::Pkcs8(signed.key.into()))
+                .map_err(|e| anyhow!("{e}"))?,
+        );
+
+        let mut cache = signed_config().lock().map_err(|e| anyhow!("{e}"))?;
+        if cache.cache_get(&host).is_none() {
+            cache.cache_set(host, config.clone());
+        }
+        Ok(config)
     }
 
-    pub fn wrap_ssl_stream(
+    pub async fn wrap_ssl_stream(
         &self,
         upgraded: TokioIo<Upgraded>,
         host: String,
-    ) -> Result<SslStream<TokioIo<Upgraded>>> {
-        let signed_ca = Self::get_signed_cert(self, host)?;
+    ) -> Result<TlsStream<TokioIo<Upgraded>>> {
+        let config = Self::signed_server_config(self, host)?;
 
-        let mut builder = SslAcceptor::mozilla_intermediate(SslMethod::tls())?;
-        builder.set_certificate(&signed_ca.cert)?;
-        builder.set_private_key(&signed_ca.key)?;
-        let acceptor = builder.build();
-
-        let server_ssl = Ssl::new(acceptor.context())?;
-        let input = SslStream::new(server_ssl, upgraded)?;
-        Ok(input)
+        TlsAcceptor::from(config)
+            .accept(upgraded)
+            .await
+            .map_err(|e| anyhow!("{e}"))
     }
 }

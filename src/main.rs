@@ -4,9 +4,9 @@
 use hyper::server::conn::http1::Builder as ServerBuilder;
 use hyper_util::rt::TokioIo;
 use motore::builder::ServiceBuilder;
-use time::{macros::format_description, UtcOffset};
+use time::{UtcOffset, macros::format_description};
 use tokio::net::TcpListener;
-use tracing::{error, info, Level};
+use tracing::{Level, error, info};
 use tracing_subscriber::fmt::time::OffsetTime;
 
 use crate::adapter::HyperAdapter;
@@ -26,6 +26,11 @@ mod util;
 
 #[tokio::main]
 async fn main() {
+    // tokio-rustls 默认同时启用 aws-lc-rs 与 ring，必须显式指定默认 provider
+    rustls::crypto::ring::default_provider()
+        .install_default()
+        .expect("Install crypto provider failed");
+
     let offset = UtcOffset::current_local_offset().expect("Should get local offset!");
     let timer = OffsetTime::new(
         offset,
