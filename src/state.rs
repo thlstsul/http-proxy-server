@@ -1,10 +1,10 @@
 use anyhow::{Result, anyhow};
-use cached::{Cached, LruCache};
 use hyper::upgrade::Upgraded;
 use hyper_util::rt::TokioIo;
 use rustls::ServerConfig;
 use rustls::pki_types::PrivateKeyDer;
 use std::{
+    collections::HashMap,
     net::SocketAddr,
     sync::{Arc, Mutex, OnceLock},
 };
@@ -13,10 +13,12 @@ use tokio_rustls::{TlsAcceptor, server::TlsStream};
 use crate::ca::CA;
 use crate::config::Config;
 
-fn signed_config() -> &'static Mutex<LruCache<String, Arc<ServerConfig>>> {
-    static SIGNED_CONFIG: OnceLock<Mutex<LruCache<String, Arc<ServerConfig>>>> = OnceLock::new();
-    SIGNED_CONFIG.get_or_init(|| Mutex::new(LruCache::new(50)))
+fn signed_config() -> &'static Mutex<HashMap<String, Arc<ServerConfig>>> {
+    static SIGNED_CONFIG: OnceLock<Mutex<HashMap<String, Arc<ServerConfig>>>> = OnceLock::new();
+    SIGNED_CONFIG.get_or_init(|| Mutex::new(HashMap::new()))
 }
+
+const SIGNED_CONFIG_CAP: usize = 50;
 
 #[derive(Clone)]
 pub struct ClientState {
@@ -65,8 +67,8 @@ impl State {
     fn signed_server_config(&self, host: String) -> Result<Arc<ServerConfig>> {
         // 短临界区查询，避免签发（阻塞的 keygen/sign）期间阻塞其它连接
         if let Some(config) = {
-            let mut cache = signed_config().lock().map_err(|e| anyhow!("{e}"))?;
-            cache.cache_get(&host).cloned()
+            let cache = signed_config().lock().map_err(|e| anyhow!("{e}"))?;
+            cache.get(&host).cloned()
         } {
             return Ok(config);
         }
@@ -81,8 +83,11 @@ impl State {
         );
 
         let mut cache = signed_config().lock().map_err(|e| anyhow!("{e}"))?;
-        if cache.cache_get(&host).is_none() {
-            cache.cache_set(host, config.clone());
+        if !cache.contains_key(&host) {
+            if cache.len() >= SIGNED_CONFIG_CAP {
+                cache.clear();
+            }
+            cache.insert(host, config.clone());
         }
         Ok(config)
     }

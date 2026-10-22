@@ -12,10 +12,11 @@ use tokio::fs::File;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::task::spawn_blocking;
 
-/// 根 CA：持有证书 DER 与私钥 PEM，可从中构造签发者
+/// 根 CA：持有证书 DER 与 PEM，及私钥 PEM，可从中构造签发者
 #[derive(Debug, Clone)]
 pub struct CA {
     pub cert: CertificateDer<'static>,
+    cert_pem: String,
     key_pem: String,
 }
 
@@ -42,21 +43,22 @@ impl CA {
             spawn_blocking(move || {
                 let cert = CertificateDer::from_pem_slice(&cert_pem).map_err(io_err)?;
                 let key_pem = String::from_utf8(key_pem).map_err(io_err)?;
-                Ok(CA { cert, key_pem })
+                let cert_pem = String::from_utf8(cert_pem).map_err(io_err)?;
+                Ok(CA {
+                    cert,
+                    cert_pem,
+                    key_pem,
+                })
             })
             .await?
         } else {
             // 重新生成
             let ca = spawn_blocking(mk_ca_cert).await?;
             if let Ok(ref ca) = ca {
-                let cert_pem = pem::encode(&pem::Pem::new(
-                    "CERTIFICATE".to_string(),
-                    ca.cert.as_ref().to_vec(),
-                ));
                 let (mut cert_file, mut key_file) =
                     tokio::try_join!(File::create(cert_path), File::create(key_path))?;
                 tokio::try_join!(
-                    cert_file.write_all(cert_pem.as_bytes()),
+                    cert_file.write_all(ca.cert_pem.as_bytes()),
                     key_file.write_all(ca.key_pem.as_bytes())
                 )?;
             }
@@ -112,6 +114,7 @@ fn mk_ca_cert() -> Result<CA, Error> {
     let cert = params.self_signed(&key).map_err(io_err)?;
     Ok(CA {
         cert: cert.der().clone(),
+        cert_pem: cert.pem(),
         key_pem: key.serialize_pem(),
     })
 }
